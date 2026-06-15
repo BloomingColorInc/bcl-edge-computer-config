@@ -180,6 +180,8 @@ NETBIRD_HOSTNAME=bcl-edge-lom-01 \
 bash scripts/bootstrap-edge-node.sh
 ```
 
+`NETBIRD_SETUP_KEY` should contain the one-off setup key copied from the NetBird dashboard. Pass it in as an environment variable when you start the script; do not store it in the repository.
+
 Optional environment flags:
 
 ```bash
@@ -255,14 +257,16 @@ sudo netplan apply
 
 The bootstrap script can enroll the node automatically when you provide a NetBird setup key. That step registers the machine as a NetBird peer, but it does not yet make it the routing endpoint for your site.
 
-For a bare metal server or routing peer, create the key from the NetBird management dashboard:
+To generate the setup key in the NetBird management dashboard:
 
 1. Sign in to the NetBird admin console.
 2. Open Peers → Servers.
 3. Select Add Peer or Generate Key.
 4. Copy the generated one-off key.
 
-Run the bootstrap script with that key so the machine enrolls as a NetBird peer:
+If your organization manages NetBird keys from Settings → Setup Keys instead, create a new one-off key there and copy it before you close the dialog.
+
+Run the bootstrap script with that key so the machine enrolls as a NetBird peer. The key is passed through `NETBIRD_SETUP_KEY`:
 
 ```bash
 sudo EDGE_ADMIN_USER=netadmin \
@@ -270,6 +274,8 @@ NETBIRD_SETUP_KEY=<setup-key> \
 NETBIRD_HOSTNAME=bcl-edge-lom-01 \
 bash scripts/bootstrap-edge-node.sh
 ```
+
+If you are re-running the script later on the same host, use a fresh setup key if the original one was one-off and already consumed.
 
 After the peer appears in the dashboard, create the network route or exit node that points at it and assign the appropriate distribution group or auto-apply setting. Use a network route for site-to-site access to private subnets, or an exit node if you want the peer to carry internet-bound traffic for connected clients. That dashboard step is what makes the peer act as the routing endpoint for your site network.
 
