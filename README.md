@@ -369,6 +369,16 @@ Existing peers:
 
 The bootstrap script installs XFCE, LightDM, XRDP, Google Chrome, sets the BloomingEdge wallpaper, configures the admin user's XFCE session, updates `/etc/xrdp/startwm.sh`, and enables the relevant services.
 
+For existing nodes where desktop behavior needs to be corrected (for example local console input issues or wallpaper not applying), rerun bootstrap in repair mode:
+
+```bash
+sudo EDGE_ADMIN_USER=netadmin \
+REPAIR_MODE=yes \
+INSTALL_DESKTOP=yes \
+INSTALL_BLOOMINGEDGE_WALLPAPER=yes \
+bash scripts/bootstrap-edge-node.sh
+```
+
 If you skip desktop installation by setting `INSTALL_DESKTOP=no`, complete the GUI and XRDP setup manually before remote access testing.
 
 The only reason to use the desktop is emergency or out-of-band administration. Normal day-to-day management should happen over SSH and NetBird.

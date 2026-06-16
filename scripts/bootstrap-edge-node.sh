@@ -44,7 +44,9 @@ DESKTOP_PACKAGES=(
   xfce4
   xfce4-goodies
   lightdm
+  lightdm-gtk-greeter
   xorg
+  xserver-xorg-input-all
   dbus-x11
   xubuntu-default-settings
   xrdp
@@ -251,10 +253,18 @@ if ! command -v xfconf-query >/dev/null 2>&1; then
   exit 0
 fi
 
+# Wait for xfdesktop to create backdrop properties so monitor names are available.
 props=""
-if props="\$(xfconf-query -c xfce4-desktop -l 2>/dev/null || true)"; then
-  :
-fi
+for _ in \
+  1 2 3 4 5 \
+  6 7 8 9 10 \
+  11 12 13 14 15; do
+  props="\$(xfconf-query -c xfce4-desktop -l 2>/dev/null || true)"
+  if printf '%s\n' "\$props" | grep -q '/last-image$'; then
+    break
+  fi
+  sleep 1
+done
 
 if [[ -n "\$props" ]]; then
   while IFS= read -r prop; do
@@ -290,6 +300,20 @@ EOF
 
   chown -R "$user_name":"$user_name" "$user_home/.config/xfce4" "$autostart_dir" "$local_bin_dir"
   log "Configured XFCE wallpaper for $user_name"
+}
+
+configure_lightdm() {
+  local lightdm_dir="/etc/lightdm/lightdm.conf.d"
+  local lightdm_conf="${lightdm_dir}/50-bcl-edge.conf"
+
+  install -d -m 0755 "$lightdm_dir"
+  cat > "$lightdm_conf" <<'EOF'
+[Seat:*]
+user-session=xfce
+greeter-session=lightdm-gtk-greeter
+EOF
+
+  log "Configured LightDM for local XFCE sessions"
 }
 
 enable_service() {
@@ -435,6 +459,8 @@ PY
   else
     adduser xrdp ssl-cert
   fi
+
+  configure_lightdm
   enable_service xrdp
   enable_display_manager
 }

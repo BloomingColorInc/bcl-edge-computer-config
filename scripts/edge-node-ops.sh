@@ -538,6 +538,7 @@ prompt_yes_no_default() {
 }
 
 run_bootstrap_wizard() {
+  local forced_repair_mode="${1:-no}"
   local edge_admin_user="netadmin"
   local netbird_setup_key=""
   local netbird_hostname=""
@@ -545,6 +546,7 @@ run_bootstrap_wizard() {
   local install_portainer="yes"
   local configure_ufw="yes"
   local enable_full_upgrade="yes"
+  local repair_mode="no"
 
   netbird_hostname="$(hostname -s 2>/dev/null || echo edge-node)"
 
@@ -580,6 +582,12 @@ run_bootstrap_wizard() {
   configure_ufw="$(prompt_yes_no_default "CONFIGURE_UFW" "yes")"
   enable_full_upgrade="$(prompt_yes_no_default "ENABLE_FULL_UPGRADE" "yes")"
 
+  if [[ "$forced_repair_mode" == "yes" ]]; then
+    repair_mode="yes"
+  else
+    repair_mode="$(prompt_yes_no_default "REPAIR_MODE" "no")"
+  fi
+
   ui_clear
   ui_panel "Bootstrap Execution Plan" "bright_magenta" \
     "Script:              ${BOOTSTRAP_SCRIPT}" \
@@ -589,7 +597,8 @@ run_bootstrap_wizard() {
     "INSTALL_DESKTOP:     ${install_desktop}" \
     "INSTALL_PORTAINER:   ${install_portainer}" \
     "CONFIGURE_UFW:       ${configure_ufw}" \
-    "ENABLE_FULL_UPGRADE: ${enable_full_upgrade}"
+    "ENABLE_FULL_UPGRADE: ${enable_full_upgrade}" \
+    "REPAIR_MODE:         ${repair_mode}"
 
   warn "FINAL WARNING: Running bootstrap will configure this node and make major system changes (packages, services, firewall, Docker, and NetBird state)."
 
@@ -619,6 +628,7 @@ run_bootstrap_wizard() {
     INSTALL_PORTAINER="$install_portainer" \
     CONFIGURE_UFW="$configure_ufw" \
     ENABLE_FULL_UPGRADE="$enable_full_upgrade" \
+    REPAIR_MODE="$repair_mode" \
     bash "$BOOTSTRAP_SCRIPT"; then
     bootstrap_rc=$?
   fi
@@ -869,7 +879,8 @@ main_menu() {
       "1) Run Bootstrap Wizard" \
       "2) Docker Stack Operations" \
       "3) NetBird Operations" \
-      "4) Quick Health Check"
+      "4) Quick Health Check" \
+      "5) Run Bootstrap in Repair Mode"
 
     ui_panel "Navigation" "bright_magenta" "q) Quit"
 
@@ -880,6 +891,7 @@ main_menu() {
       2) docker_menu ;;
       3) netbird_menu ;;
       4) if ! quick_health_check; then warn "Health check reported errors."; fi; pause ;;
+      5) if ! run_bootstrap_wizard yes; then warn "Repair bootstrap wizard failed."; fi; pause ;;
       q|Q) echo "Exiting edge-node-ops."; exit 0 ;;
       *) warn "Invalid choice"; pause ;;
     esac
