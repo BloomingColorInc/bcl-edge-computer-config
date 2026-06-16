@@ -256,35 +256,36 @@ if ! command -v xfconf-query >/dev/null 2>&1; then
   exit 0
 fi
 
-# Wait for xfdesktop to create backdrop properties so monitor names are available.
-props=""
-for _ in \
-  1 2 3 4 5 \
-  6 7 8 9 10 \
-  11 12 13 14 15; do
-  props="\$(xfconf-query -c xfce4-desktop -l 2>/dev/null || true)"
-  if printf '%s\n' "\$props" | grep -q '/last-image$'; then
-    break
-  fi
-  sleep 1
-done
+apply_wallpaper_once() {
+  local props=""
 
-if [[ -n "\$props" ]]; then
-  while IFS= read -r prop; do
-    [[ -n "\$prop" ]] || continue
-    if [[ "\$prop" == */last-image ]]; then
-      xfconf-query -c xfce4-desktop -p "\$prop" -n -t string -s "\$wallpaper_path" >/dev/null 2>&1 || true
-    elif [[ "\$prop" == */image-style ]]; then
-      xfconf-query -c xfce4-desktop -p "\$prop" -n -t int -s 5 >/dev/null 2>&1 || true
-    fi
-  done <<< "\$props"
-else
-  # Fallback paths for fresh profiles where properties are not created yet.
+  props="\$(xfconf-query -c xfce4-desktop -l 2>/dev/null || true)"
+
+  if [[ -n "\$props" ]]; then
+    while IFS= read -r prop; do
+      [[ -n "\$prop" ]] || continue
+      if [[ "\$prop" == */last-image ]]; then
+        xfconf-query -c xfce4-desktop -p "\$prop" -n -t string -s "\$wallpaper_path" >/dev/null 2>&1 || true
+      elif [[ "\$prop" == */image-style ]]; then
+        xfconf-query -c xfce4-desktop -p "\$prop" -n -t int -s 5 >/dev/null 2>&1 || true
+      fi
+    done <<< "\$props"
+  fi
+
+  # Ensure fallback keys exist for fresh profiles and virtual/XRDP monitors.
+  xfconf-query -c xfce4-desktop -p /backdrop/single-workspace-mode -n -t bool -s true >/dev/null 2>&1 || true
+  xfconf-query -c xfce4-desktop -p /backdrop/single-workspace-number -n -t int -s 0 >/dev/null 2>&1 || true
   xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image -n -t string -s "\$wallpaper_path" >/dev/null 2>&1 || true
   xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/image-style -n -t int -s 5 >/dev/null 2>&1 || true
   xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorVirtual1/workspace0/last-image -n -t string -s "\$wallpaper_path" >/dev/null 2>&1 || true
   xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorVirtual1/workspace0/image-style -n -t int -s 5 >/dev/null 2>&1 || true
-fi
+}
+
+# Allow XFCE/XRDP monitor properties to settle, then enforce wallpaper repeatedly.
+for _ in 1 2 3 4 5 6 7 8; do
+  apply_wallpaper_once
+  sleep 2
+done
 EOF
 
   cat > "$wallpaper_autostart_desktop" <<EOF
@@ -293,6 +294,7 @@ Type=Application
 Name=BloomingEdge Wallpaper
 Comment=Applies BloomingEdge wallpaper for XFCE sessions
 Exec=$wallpaper_setter_script
+X-GNOME-Autostart-Delay=3
 OnlyShowIn=XFCE;
 X-GNOME-Autostart-enabled=true
 NoDisplay=true
