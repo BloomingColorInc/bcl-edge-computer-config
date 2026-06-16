@@ -208,6 +208,10 @@ configure_xfce_wallpaper() {
   local user_home="$2"
   local xfce_dir="$user_home/.config/xfce4/xfconf/xfce-perchannel-xml"
   local xfce_wallpaper_xml="$xfce_dir/xfce4-desktop.xml"
+  local autostart_dir="$user_home/.config/autostart"
+  local local_bin_dir="$user_home/.local/bin"
+  local wallpaper_setter_script="$local_bin_dir/bloomingedge-set-wallpaper.sh"
+  local wallpaper_autostart_desktop="$autostart_dir/bloomingedge-set-wallpaper.desktop"
 
   install -d -m 0755 "$xfce_dir"
 
@@ -234,7 +238,57 @@ configure_xfce_wallpaper() {
 </channel>
 EOF
 
-  chown -R "$user_name":"$user_name" "$user_home/.config/xfce4"
+  install -d -m 0755 "$autostart_dir" "$local_bin_dir"
+
+  cat > "$wallpaper_setter_script" <<EOF
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+wallpaper_path="$WALLPAPER_TARGET_PATH"
+
+if ! command -v xfconf-query >/dev/null 2>&1; then
+  exit 0
+fi
+
+props=""
+if props="\$(xfconf-query -c xfce4-desktop -l 2>/dev/null || true)"; then
+  :
+fi
+
+if [[ -n "\$props" ]]; then
+  while IFS= read -r prop; do
+    [[ -n "\$prop" ]] || continue
+    if [[ "\$prop" == */last-image ]]; then
+      xfconf-query -c xfce4-desktop -p "\$prop" -n -t string -s "\$wallpaper_path" >/dev/null 2>&1 || true
+    elif [[ "\$prop" == */image-style ]]; then
+      xfconf-query -c xfce4-desktop -p "\$prop" -n -t int -s 5 >/dev/null 2>&1 || true
+    fi
+  done <<< "\$props"
+else
+  # Fallback paths for fresh profiles where properties are not created yet.
+  xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image -n -t string -s "\$wallpaper_path" >/dev/null 2>&1 || true
+  xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/image-style -n -t int -s 5 >/dev/null 2>&1 || true
+  xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorVirtual1/workspace0/last-image -n -t string -s "\$wallpaper_path" >/dev/null 2>&1 || true
+  xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorVirtual1/workspace0/image-style -n -t int -s 5 >/dev/null 2>&1 || true
+fi
+EOF
+
+  cat > "$wallpaper_autostart_desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=BloomingEdge Wallpaper
+Comment=Applies BloomingEdge wallpaper for XFCE sessions
+Exec=$wallpaper_setter_script
+OnlyShowIn=XFCE;
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+EOF
+
+  chmod 0755 "$wallpaper_setter_script"
+  chmod 0644 "$wallpaper_autostart_desktop"
+
+  chown -R "$user_name":"$user_name" "$user_home/.config/xfce4" "$autostart_dir" "$local_bin_dir"
   log "Configured XFCE wallpaper for $user_name"
 }
 
