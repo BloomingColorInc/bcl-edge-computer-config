@@ -280,6 +280,19 @@ EOF
   log "Configured Chrome launcher/default browser for $user_name"
 }
 
+repair_desktop_user_permissions() {
+  local user_name="$1"
+  local user_home="$2"
+
+  install -d -m 0755 "$user_home/.config" "$user_home/.cache" "$user_home/.local" "$user_home/.local/bin" "$user_home/.local/share" "$user_home/.local/share/applications"
+  install -d -m 0700 "$user_home/.local/share/keyrings"
+
+  chown -R "$user_name":"$user_name" "$user_home/.config" "$user_home/.cache" "$user_home/.local"
+  chmod 0700 "$user_home/.local/share/keyrings"
+
+  log "Repaired desktop profile permissions for $user_name"
+}
+
 install_wallpaper_asset() {
   if [[ ! -f "$WALLPAPER_SOURCE_PATH" ]]; then
     log "Skipping wallpaper install; source image not found: $WALLPAPER_SOURCE_PATH"
@@ -377,7 +390,7 @@ apply_wallpaper_once() {
 
   # Prevent XFCE from repeatedly opening display settings on XRDP virtual displays.
   xfconf-query -c displays -p /Notify -n -t bool -s false >/dev/null 2>&1 || true
-  xfconf-query -c displays -p /AutoEnableProfiles -n -t bool -s true >/dev/null 2>&1 || true
+  xfconf-query -c displays -p /AutoEnableProfiles -n -t bool -s false >/dev/null 2>&1 || true
 }
 
 # Allow XFCE/XRDP monitor properties to settle, then enforce wallpaper repeatedly.
@@ -594,6 +607,7 @@ configure_desktop() {
   if id "$ADMIN_USER" >/dev/null 2>&1; then
     local user_home
     user_home="$(getent passwd "$ADMIN_USER" | cut -d: -f6)"
+    repair_desktop_user_permissions "$ADMIN_USER" "$user_home"
     log "Configuring XFCE session for $ADMIN_USER"
     cat > "$user_home/.xsession" <<'EOF'
 #!/bin/sh
