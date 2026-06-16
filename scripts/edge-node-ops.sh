@@ -371,52 +371,11 @@ pause() {
   fi
 }
 
-_OP_TIMER_PID=""
-
 _op_timer_format_mmss() {
   local total_seconds="$1"
   local mins="$((total_seconds / 60))"
   local secs="$((total_seconds % 60))"
   printf '%02d:%02d' "$mins" "$secs"
-}
-
-start_op_timer() {
-  [[ -t 2 ]] || return 0
-  _OP_TIMER_PID=""
-  local op_start
-  op_start="$(date +%s)"
-
-  (
-    local frames=( '-' '\\' '|' '/' )
-    local idx=0
-    while true; do
-      local now elapsed elapsed_fmt spin
-      now="$(date +%s)"
-      elapsed=$(( now - op_start ))
-      elapsed_fmt="$(_op_timer_format_mmss "$elapsed")"
-      spin="${frames[$(( idx % 4 ))]}"
-
-      printf '\r\033[K\033[2m⏳ [%s] Running bootstrap... elapsed %s\033[0m' "$spin" "$elapsed_fmt" >&2
-
-      idx=$(( idx + 1 ))
-      sleep 1
-    done
-  ) &
-
-  _OP_TIMER_PID=$!
-}
-
-stop_op_timer() {
-  if [[ -n "${_OP_TIMER_PID:-}" ]]; then
-    kill "$_OP_TIMER_PID" 2>/dev/null || true
-    wait "$_OP_TIMER_PID" 2>/dev/null || true
-    _OP_TIMER_PID=""
-
-    printf '\r\033[K' >&2
-
-    # Move to a clean next line so the next prompt does not overlap timer output.
-    printf '\n' >&2
-  fi
 }
 
 detect_compose_cmd() {
@@ -591,7 +550,6 @@ run_bootstrap_wizard() {
   local bootstrap_elapsed=0
 
   bootstrap_start_epoch="$(date +%s)"
-  start_op_timer
   if ! run_with_privilege env \
     EDGE_ADMIN_USER="$edge_admin_user" \
     NETBIRD_SETUP_KEY="$netbird_setup_key" \
@@ -604,7 +562,6 @@ run_bootstrap_wizard() {
     bash "$BOOTSTRAP_SCRIPT"; then
     bootstrap_rc=$?
   fi
-  stop_op_timer
   bootstrap_elapsed=$(( $(date +%s) - bootstrap_start_epoch ))
 
   if [[ "$bootstrap_rc" -eq 0 ]]; then
