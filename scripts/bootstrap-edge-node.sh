@@ -7,10 +7,12 @@ ADMIN_USER="${EDGE_ADMIN_USER:-$DEFAULT_ADMIN_USER}"
 NETBIRD_SETUP_KEY="${NETBIRD_SETUP_KEY:-}"
 NETBIRD_HOSTNAME="${NETBIRD_HOSTNAME:-$(hostname -s)}"
 INSTALL_DESKTOP="${INSTALL_DESKTOP:-yes}"
-INSTALL_NETDATA="${INSTALL_NETDATA:-yes}"
 INSTALL_PORTAINER="${INSTALL_PORTAINER:-yes}"
 CONFIGURE_UFW="${CONFIGURE_UFW:-yes}"
 ENABLE_FULL_UPGRADE="${ENABLE_FULL_UPGRADE:-yes}"
+REPAIR_MODE="${REPAIR_MODE:-no}"
+FORCE_NETBIRD_REENROLL="${FORCE_NETBIRD_REENROLL:-no}"
+FORCE_PORTAINER_REDEPLOY="${FORCE_PORTAINER_REDEPLOY:-no}"
 PORTAINER_CONTAINER_NAME="${PORTAINER_CONTAINER_NAME:-portainer-agent}"
 
 BASE_PACKAGES=(
@@ -46,6 +48,41 @@ log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
+normalize_yes_no() {
+  local raw="${1:-}"
+  case "${raw,,}" in
+    y|yes|true|1|on)
+      printf 'yes'
+      ;;
+    *)
+      printf 'no'
+      ;;
+  esac
+}
+
+apply_mode_defaults() {
+  INSTALL_DESKTOP="$(normalize_yes_no "$INSTALL_DESKTOP")"
+  INSTALL_PORTAINER="$(normalize_yes_no "$INSTALL_PORTAINER")"
+  CONFIGURE_UFW="$(normalize_yes_no "$CONFIGURE_UFW")"
+  ENABLE_FULL_UPGRADE="$(normalize_yes_no "$ENABLE_FULL_UPGRADE")"
+  REPAIR_MODE="$(normalize_yes_no "$REPAIR_MODE")"
+  FORCE_NETBIRD_REENROLL="$(normalize_yes_no "$FORCE_NETBIRD_REENROLL")"
+  FORCE_PORTAINER_REDEPLOY="$(normalize_yes_no "$FORCE_PORTAINER_REDEPLOY")"
+
+  if [[ "$REPAIR_MODE" == "yes" ]]; then
+    # Repair mode forces re-apply of key mutable components.
+    INSTALL_DESKTOP="yes"
+    INSTALL_PORTAINER="yes"
+    CONFIGURE_UFW="yes"
+    FORCE_NETBIRD_REENROLL="yes"
+    FORCE_PORTAINER_REDEPLOY="yes"
+  fi
+}
+
+show_mode_summary() {
+  log "Mode summary: REPAIR_MODE=$REPAIR_MODE, FORCE_NETBIRD_REENROLL=$FORCE_NETBIRD_REENROLL, FORCE_PORTAINER_REDEPLOY=$FORCE_PORTAINER_REDEPLOY"
+}
+
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     echo "Run this script with sudo." >&2
@@ -58,7 +95,7 @@ run_apt_update() {
   apt-get update
 
   if [[ "$ENABLE_FULL_UPGRADE" == "yes" ]]; then
-    log "Applying package upgrades"
+    log "Applying in-release package upgrades (apt-get upgrade only; no Ubuntu release upgrade)"
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
   fi
 }
@@ -107,6 +144,16 @@ enroll_netbird() {
   if [[ -z "$NETBIRD_SETUP_KEY" ]]; then
     log "NetBird setup key not supplied; skipping enrollment"
     return
+  fi
+
+  if [[ "$FORCE_NETBIRD_REENROLL" == "yes" ]]; then
+    log "Force NetBird re-enroll enabled; disconnecting current peer session first"
+    netbird down >/dev/null 2>&1 || true
+  else
+    if netbird status 2>/dev/null | grep -Eqi 'Connected|Logged in|Management: Connected'; then
+      log "NetBird already connected; skipping re-enrollment (set FORCE_NETBIRD_REENROLL=yes to force)"
+      return
+    fi
   fi
 
   log "Enrolling NetBird peer as $NETBIRD_HOSTNAME"
@@ -167,7 +214,11 @@ lines.extend([
 path.write_text('\n'.join(lines))
 PY
 
-  adduser xrdp ssl-cert
+  if id -nG xrdp 2>/dev/null | tr ' ' '\n' | grep -Fxq ssl-cert; then
+    log "xrdp is already a member of ssl-cert"
+  else
+    adduser xrdp ssl-cert
+  fi
   enable_service xrdp
   enable_service display-manager
 }
@@ -184,9 +235,14 @@ install_portainer_agent() {
   fi
 
   if docker ps -a --format '{{.Names}}' | grep -Fxq "$PORTAINER_CONTAINER_NAME"; then
-    log "Portainer agent container already exists"
-    docker start "$PORTAINER_CONTAINER_NAME" >/dev/null 2>&1 || true
-    return
+    if [[ "$FORCE_PORTAINER_REDEPLOY" == "yes" ]]; then
+      log "Force Portainer redeploy enabled; removing existing container"
+      docker rm -f "$PORTAINER_CONTAINER_NAME" >/dev/null 2>&1 || true
+    else
+      log "Portainer agent container already exists"
+      docker start "$PORTAINER_CONTAINER_NAME" >/dev/null 2>&1 || true
+      return
+    fi
   fi
 
   log "Deploying Portainer agent container"
@@ -199,21 +255,6 @@ install_portainer_agent() {
     portainer/agent
 }
 
-install_netdata() {
-  if [[ "$INSTALL_NETDATA" != "yes" ]]; then
-    log "Skipping Netdata installation"
-    return
-  fi
-
-  if command -v netdata >/dev/null 2>&1; then
-    log "Netdata already installed"
-    return
-  fi
-
-  log "Installing Netdata"
-  bash <(curl -Ss https://my-netdata.io/kickstart.sh) --non-interactive
-}
-
 configure_firewall() {
   if [[ "$CONFIGURE_UFW" != "yes" ]]; then
     log "Skipping UFW configuration"
@@ -221,8 +262,18 @@ configure_firewall() {
   fi
 
   log "Allowing SSH and XRDP through UFW"
-  ufw allow ssh
-  ufw allow 3389/tcp
+  if ufw status | grep -Eqi '(^|\s)(22/tcp|OpenSSH)(\s|$)'; then
+    log "UFW rule for SSH already present"
+  else
+    ufw allow ssh
+  fi
+
+  if ufw status | grep -Eqi '(^|\s)3389/tcp(\s|$)'; then
+    log "UFW rule for XRDP (3389/tcp) already present"
+  else
+    ufw allow 3389/tcp
+  fi
+
   ufw --force enable
 }
 
@@ -252,6 +303,8 @@ EOF
 
 main() {
   require_root
+  apply_mode_defaults
+  show_mode_summary
   run_apt_update
   install_packages "${BASE_PACKAGES[@]}"
   enable_service chrony
@@ -261,7 +314,6 @@ main() {
   enroll_netbird
   configure_desktop
   install_portainer_agent
-  install_netdata
   prepare_librenms_path
   configure_firewall
   print_next_steps

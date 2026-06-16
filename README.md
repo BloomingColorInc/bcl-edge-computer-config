@@ -1,6 +1,8 @@
 # BloomingEdge Node Build Guide
 
-## Zero-Trust VPN Routing + Monitoring + Remote Access Platform
+> **READ FIRST:** Read through the entire document before attempting any of the steps so you understand the full workflow, prerequisites, and manual follow-up items. This guide assumes you will use SSH for remote management after the initial OS installation.
+
+## Zero-Trust VPN Routing + Remote Access + System Monitoring Platform
 
 ![BloomingEdge Network](img/BloomingEdge_Network.png)
 
@@ -8,8 +10,6 @@ Version: 0.1 (beta)
 Target Hardware: HP EliteDesk 800 G4 SFF (or equivalent)
 Target OS: Ubuntu Server 24.04 LTS
 Purpose: Site Edge Infrastructure (Intersite Connectivity, Remote Access, Network Device Monitoring)
-
-Read through the entire document before attempting any of the steps so you understand the full workflow, prerequisites, and manual follow-up items. This guide assumes you will use SSH for remote management after the initial installation.
 
 ---
 
@@ -23,7 +23,6 @@ Primary functions:
 * Site-to-Site Overlay Networking
 * Remote User Access
 * LibreNMS Distributed Poller
-* Netdata Monitoring
 * Portainer Agent
 * Maintenance Automation
 * Emergency GUI Administration
@@ -137,6 +136,35 @@ Reboot.
 
 After the initial installation, SSH is available for remote management and for copying and pasting the commands in this guide from another machine.
 
+Connect from your management workstation:
+
+1. ***While still at the edge node computer***, run this command in the local console to find the machine IP address:
+
+```bash
+ip a
+```
+
+2. ***At your remote admin workstation***, connect over SSH using that IP address (replace `<node-ip>`):
+
+```bash
+ssh netadmin@<node-ip>
+```
+
+3. On first connection, type `yes` to trust the host key, then enter the `netadmin` password.
+
+4. Optional: copy your SSH public key so future logins do not require a password:
+
+```bash
+ssh-copy-id netadmin@<node-ip>
+```
+
+5. Verify remote access and host identity:
+
+```bash
+hostname
+whoami
+```
+
 ---
 
 # 5. Clone the Repository
@@ -152,7 +180,7 @@ Clone the public repository:
 
 ```bash
 git clone https://github.com/bloomingcolorinc/bcl-edge-node-build.git
-cd bcl-edge-computer-config
+cd bcl-edge-node-build
 ```
 
 The repository is hosted in the `bloomingcolorinc` GitHub organization.
@@ -168,12 +196,24 @@ Run the bootstrap script after the operating system is installed and you can rea
 * NetBird package installation and enrollment when a setup key is provided
 * XFCE, XRDP, and session configuration
 * Portainer Agent deployment
-* Netdata installation
 * SNMP daemon installation for host polling
 * LibreNMS working directory creation
 * Baseline UFW rules for SSH and XRDP
 
+Before running the script, generate a NetBird one-off setup key in the NetBird management dashboard:
+
+1. Sign in to the NetBird admin console.
+2. Open Peers → Servers.
+3. Select Add Peer or Generate Key.
+4. Copy the generated one-off key.
+
+> **READ FIRST:** NetBird one-off setup keys are shown only once when created. Copy and securely save the key before closing the dialog, or you will need to generate a new key.
+
+If your organization manages keys from Settings → Setup Keys instead, create a new one-off key there and copy it immediately before you close the dialog.
+
 Run the script from the cloned repository:
+
+Because the bootstrap command is long, you may want to copy it into your text editor of choice, replace placeholder values (such as `<setup-key>` and hostname), then paste the final command into your SSH session.
 
 ```bash
 sudo EDGE_ADMIN_USER=netadmin \
@@ -182,7 +222,9 @@ NETBIRD_HOSTNAME=bcl-edge-lom-01 \
 bash scripts/bootstrap-edge-node.sh
 ```
 
-`NETBIRD_SETUP_KEY` should contain the one-off setup key copied from the NetBird dashboard. Pass it in as an environment variable when you start the script; do not store it in the repository.
+`NETBIRD_SETUP_KEY` should contain that one-off key copied from the NetBird dashboard. Pass it in as an environment variable when you start the script; do not store it in the repository.
+
+The bootstrap script is designed to be re-runnable (idempotent) for normal operations. In repair situations, you can force re-application of key components with repair flags.
 
 Optional environment flags:
 
@@ -191,9 +233,21 @@ sudo EDGE_ADMIN_USER=netadmin \
 NETBIRD_SETUP_KEY=<setup-key> \
 NETBIRD_HOSTNAME=bcl-edge-lom-01 \
 INSTALL_DESKTOP=yes \
-INSTALL_NETDATA=yes \
 INSTALL_PORTAINER=yes \
 CONFIGURE_UFW=yes \
+REPAIR_MODE=no \
+FORCE_NETBIRD_REENROLL=no \
+FORCE_PORTAINER_REDEPLOY=no \
+bash scripts/bootstrap-edge-node.sh
+```
+
+Repair-mode example (forces NetBird re-enrollment and Portainer redeploy):
+
+```bash
+sudo EDGE_ADMIN_USER=netadmin \
+NETBIRD_SETUP_KEY=<setup-key> \
+NETBIRD_HOSTNAME=bcl-edge-lom-01 \
+REPAIR_MODE=yes \
 bash scripts/bootstrap-edge-node.sh
 ```
 
@@ -203,10 +257,12 @@ Defaults:
 * `NETBIRD_SETUP_KEY=<setup-key>` for unattended NetBird enrollment
 * `NETBIRD_HOSTNAME=bcl-edge-lom-01` or `bcl-edge-lou-01`
 * `INSTALL_DESKTOP=yes`
-* `INSTALL_NETDATA=yes`
 * `INSTALL_PORTAINER=yes`
 * `CONFIGURE_UFW=yes`
-* `ENABLE_FULL_UPGRADE=yes`
+* `ENABLE_FULL_UPGRADE=yes` (runs `apt-get upgrade` only within the current Ubuntu release; it does not perform `do-release-upgrade`)
+* `REPAIR_MODE=no` (set to `yes` for emergency repair re-application)
+* `FORCE_NETBIRD_REENROLL=no` (set to `yes` to force `netbird down` then `netbird up`)
+* `FORCE_PORTAINER_REDEPLOY=no` (set to `yes` to recreate the Portainer agent container)
 
 ---
 
@@ -257,27 +313,7 @@ sudo netplan apply
 
 # 8. Join NetBird
 
-The bootstrap script can enroll the node automatically when you provide a NetBird setup key. That step registers the machine as a NetBird peer, but it does not yet make it the routing endpoint for your site.
-
-To generate the setup key in the NetBird management dashboard:
-
-1. Sign in to the NetBird admin console.
-2. Open Peers → Servers.
-3. Select Add Peer or Generate Key.
-4. Copy the generated one-off key.
-
-If your organization manages NetBird keys from Settings → Setup Keys instead, create a new one-off key there and copy it before you close the dialog.
-
-Run the bootstrap script with that key so the machine enrolls as a NetBird peer. The key is passed through `NETBIRD_SETUP_KEY`:
-
-```bash
-sudo EDGE_ADMIN_USER=netadmin \
-NETBIRD_SETUP_KEY=<setup-key> \
-NETBIRD_HOSTNAME=bcl-edge-lom-01 \
-bash scripts/bootstrap-edge-node.sh
-```
-
-If you are re-running the script later on the same host, use a fresh setup key if the original one was one-off and already consumed.
+When the bootstrap script runs with `NETBIRD_SETUP_KEY`, the node enrolls as a NetBird peer during that same run. You do not need to run the bootstrap script again.
 
 After the peer appears in the dashboard, create the network route or exit node that points at it and assign the appropriate distribution group or auto-apply setting. Use a network route for site-to-site access to private subnets, or an exit node if you want the peer to carry internet-bound traffic for connected clients. That dashboard step is what makes the peer act as the routing endpoint for your site network.
 
@@ -329,17 +365,7 @@ docker ps --filter name=portainer-agent
 
 ---
 
-# 11. Netdata
-
-The bootstrap script installs Netdata by default so you can confirm system health immediately after the build.
-
-Verify:
-
-http://SERVER:19999
-
----
-
-# 12. SNMP Agent, Portainer, and LibreNMS Stack
+# 11. SNMP Agent, Portainer, and LibreNMS Stack
 
 The bootstrap script installs and starts the host SNMP daemon (`snmpd`). LibreNMS and other monitoring systems use that service to poll the node.
 
@@ -437,7 +463,7 @@ LibreNMS in AWS to BloomingEdge:
 
 ---
 
-# 13. Firewall
+# 12. Firewall
 
 The bootstrap script enables UFW and allows:
 
@@ -450,7 +476,7 @@ If your site uses additional management services, add only the ports you actuall
 
 ---
 
-# 14. Validation
+# 13. Validation
 
 Verify:
 
@@ -467,11 +493,24 @@ Test:
 * NetBird Routing
 * SNMP Polling
 * Portainer
-* Netdata
+
+## Operations CLI Menu
+
+The repository includes an interactive operations menu script for day-2 node administration:
+
+```bash
+sudo bash scripts/edge-node-ops.sh
+```
+
+The menu provides high-level operations for:
+
+* Docker stack lifecycle (`up`, `down`, `restart`, `pull`, status, and logs)
+* NetBird peer operations (`status`, `up` with setup key, `down`, and service restart)
+* Quick node health checks for core services and containers
 
 ---
 
-# 15. Production Cutover
+# 14. Production Cutover
 
 Add the node as a secondary routing peer first.
 
@@ -504,7 +543,6 @@ Edge Services:
 
 * NetBird
 * LibreNMS
-* Netdata
 * Portainer
 * Automation
 * XRDP
