@@ -207,6 +207,8 @@ configure_default_browser_for_user() {
   local helpers_rc="$user_home/.config/xfce4/helpers.rc"
   local applications_dir="$user_home/.config"
   local mimeapps_list="$applications_dir/mimeapps.list"
+  local xfce_helper_dir="$user_home/.local/share/xfce4/helpers"
+  local xfce_helper_file="$xfce_helper_dir/custom-google-chrome.desktop"
 
   if ! command -v google-chrome >/dev/null 2>&1 && ! command -v google-chrome-stable >/dev/null 2>&1; then
     log "Skipping default browser configuration; Chrome binary not found"
@@ -215,8 +217,22 @@ configure_default_browser_for_user() {
 
   install -d -m 0755 "$user_home/.config/xfce4" "$applications_dir"
 
+  install -d -m 0755 "$xfce_helper_dir"
+
+  cat > "$xfce_helper_file" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=X-XFCE-Helper
+Name=Google Chrome
+X-XFCE-Category=WebBrowser
+X-XFCE-CommandsWithParameter=/usr/bin/google-chrome-stable "%s"
+X-XFCE-Commands=/usr/bin/google-chrome-stable
+Icon=google-chrome
+NoDisplay=true
+EOF
+
   cat > "$helpers_rc" <<'EOF'
-WebBrowser=google-chrome.desktop
+WebBrowser=custom-google-chrome.desktop
 WebBrowserDismissed=true
 EOF
 
@@ -230,6 +246,7 @@ x-scheme-handler/unknown=google-chrome.desktop
 EOF
 
   chown "$user_name":"$user_name" "$helpers_rc" "$mimeapps_list"
+  chown "$user_name":"$user_name" "$xfce_helper_file"
 
   # Configure desktop defaults via user session tools when available.
   runuser -u "$user_name" -- xdg-settings set default-web-browser google-chrome.desktop >/dev/null 2>&1 || true
@@ -259,6 +276,7 @@ configure_xfce_wallpaper() {
   local wallpaper_setter_script="$local_bin_dir/bloomingedge-set-wallpaper.sh"
   local wallpaper_autostart_desktop="$autostart_dir/bloomingedge-set-wallpaper.desktop"
   local display_popup_override_desktop="$autostart_dir/xfce4-display-settings.desktop"
+  local xubuntu_display_settings_override_desktop="$autostart_dir/xfce4-settings-helper-autostart.desktop"
 
   install -d -m 0755 "$xfce_dir"
 
@@ -333,8 +351,21 @@ for _ in 1 2 3 4 5 6 7 8; do
   sleep 2
 done
 
+# Some first-login XRDP sessions apply defaults later; enforce again after that phase.
+sleep 20
+for _ in 1 2 3 4 5; do
+  apply_wallpaper_once
+  sleep 2
+done
+
 # If display settings dialog appears, close it after applying profile/wallpaper.
 pkill -x xfce4-display-settings >/dev/null 2>&1 || true
+
+# Keep suppressing for a short window while XFCE startup components settle.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  pkill -x xfce4-display-settings >/dev/null 2>&1 || true
+  sleep 2
+done
 
 if command -v xfdesktop >/dev/null 2>&1; then
   xfdesktop --reload >/dev/null 2>&1 || true
@@ -362,8 +393,17 @@ X-GNOME-Autostart-enabled=false
 NoDisplay=true
 EOF
 
+  cat > "$xubuntu_display_settings_override_desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=XFCE Settings Helper
+Hidden=true
+X-GNOME-Autostart-enabled=false
+NoDisplay=true
+EOF
+
   chmod 0755 "$wallpaper_setter_script"
-  chmod 0644 "$wallpaper_autostart_desktop" "$display_popup_override_desktop"
+  chmod 0644 "$wallpaper_autostart_desktop" "$display_popup_override_desktop" "$xubuntu_display_settings_override_desktop"
 
   chown -R "$user_name":"$user_name" "$user_home/.config/xfce4" "$autostart_dir" "$local_bin_dir"
   log "Configured XFCE wallpaper for $user_name"
