@@ -365,7 +365,9 @@ show_node_snapshot_lines() {
 
 pause() {
   if [[ "$INTERACTIVE" == true ]]; then
-    read -r -p "Press Enter to continue..." _
+    # Ensure the prompt always starts on a fresh line after animated output.
+    printf '\n'
+    read -r -p "Press Enter to continue... " _
   fi
 }
 
@@ -444,6 +446,9 @@ stop_op_timer() {
     else
       printf '\r\033[K' >&2
     fi
+
+    # Move to a clean next line so the next prompt does not overlap timer output.
+    printf '\n' >&2
   fi
 }
 
