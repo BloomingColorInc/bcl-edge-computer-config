@@ -364,7 +364,7 @@ Existing peers:
 
 # 9. GUI and XRDP
 
-The bootstrap script installs XFCE, LightDM, XRDP, configures the admin user's XFCE session, updates `/etc/xrdp/startwm.sh`, and enables the relevant services.
+The bootstrap script installs XFCE, LightDM, XRDP, Google Chrome, configures the admin user's XFCE session, updates `/etc/xrdp/startwm.sh`, and enables the relevant services.
 
 If you skip desktop installation by setting `INSTALL_DESKTOP=no`, complete the GUI and XRDP setup manually before remote access testing.
 

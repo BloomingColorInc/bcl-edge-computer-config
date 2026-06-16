@@ -155,6 +155,36 @@ install_packages() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
 }
 
+install_google_chrome() {
+  local arch
+  arch="$(dpkg --print-architecture)"
+
+  if [[ "$arch" != "amd64" ]]; then
+    log "Skipping Google Chrome install on unsupported architecture: $arch"
+    return
+  fi
+
+  if command -v google-chrome >/dev/null 2>&1; then
+    log "Google Chrome already installed"
+    return
+  fi
+
+  log "Installing Google Chrome"
+  install -m 0755 -d /etc/apt/keyrings
+
+  if [[ ! -f /etc/apt/keyrings/google-chrome.gpg ]]; then
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg
+    chmod a+r /etc/apt/keyrings/google-chrome.gpg
+  fi
+
+  cat >/etc/apt/sources.list.d/google-chrome.list <<'EOF'
+deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main
+EOF
+
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable
+}
+
 enable_service() {
   local service_name="$1"
   log "Enabling service: $service_name"
@@ -235,6 +265,7 @@ configure_desktop() {
   fi
 
   install_packages "${DESKTOP_PACKAGES[@]}"
+  install_google_chrome
 
   if id "$ADMIN_USER" >/dev/null 2>&1; then
     local user_home
