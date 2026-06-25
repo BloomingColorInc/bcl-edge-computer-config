@@ -62,8 +62,136 @@ DESKTOP_PACKAGES=(
 
 NETPLAN_RENDERER_FILE="/etc/netplan/99-bcl-network-manager-renderer.yaml"
 
+APT_UPDATE_RECOVERY_ACTION="none"
+APT_UPDATE_FINAL_STATUS="unknown"
+GOOGLE_CHROME_REPO_DISABLED="no"
+
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+repair_google_chrome_repo_key() {
+  local keyring_dir="/etc/apt/keyrings"
+  local keyring_file="$keyring_dir/google-chrome.gpg"
+  local key_url="https://dl.google.com/linux/linux_signing_key.pub"
+
+  if ! command -v gpg >/dev/null 2>&1; then
+    log "Cannot repair Google Chrome apt key: gpg is not installed"
+    return 1
+  fi
+
+  install -m 0755 -d "$keyring_dir"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$key_url" | gpg --dearmor -o "$keyring_file"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$key_url" | gpg --dearmor -o "$keyring_file"
+  else
+    log "Cannot repair Google Chrome apt key: neither curl nor wget is available"
+    return 1
+  fi
+
+  chmod a+r "$keyring_file"
+  return 0
+}
+
+disable_google_chrome_repo() {
+  local chrome_repo_file="/etc/apt/sources.list.d/google-chrome.list"
+  local disabled_repo_file="/etc/apt/sources.list.d/google-chrome.list.disabled"
+
+  if [[ -f "$chrome_repo_file" ]]; then
+    mv "$chrome_repo_file" "$disabled_repo_file"
+    GOOGLE_CHROME_REPO_DISABLED="yes"
+    log "Disabled Google Chrome apt repo due to key/signature errors: $disabled_repo_file"
+  fi
+}
+
+is_google_chrome_repo_present() {
+  local chrome_repo_file="/etc/apt/sources.list.d/google-chrome.list"
+  [[ -f "$chrome_repo_file" ]]
+}
+
+apt_update_with_repo_recovery() {
+  if apt-get update; then
+    APT_UPDATE_FINAL_STATUS="ok"
+    return 0
+  fi
+
+  if is_google_chrome_repo_present; then
+    log "apt update failed; attempting Google Chrome repo key repair"
+    if repair_google_chrome_repo_key; then
+      if apt-get update; then
+        APT_UPDATE_RECOVERY_ACTION="chrome-key-refreshed"
+        APT_UPDATE_FINAL_STATUS="ok"
+        log "Recovered apt update by refreshing Google Chrome apt key"
+        return 0
+      fi
+    fi
+
+    log "Google Chrome repo still failing; temporarily disabling repo and retrying apt update"
+    disable_google_chrome_repo
+    apt-get update
+    APT_UPDATE_RECOVERY_ACTION="chrome-repo-disabled"
+    APT_UPDATE_FINAL_STATUS="ok"
+    return 0
+  fi
+
+  APT_UPDATE_FINAL_STATUS="failed"
+  return 1
+}
+
+print_repo_health_summary() {
+  local chrome_repo_file="/etc/apt/sources.list.d/google-chrome.list"
+  local chrome_repo_disabled_file="/etc/apt/sources.list.d/google-chrome.list.disabled"
+  local chrome_key_file="/etc/apt/keyrings/google-chrome.gpg"
+
+  cat <<EOF
+
+Repository health summary:
+  - apt update status: $APT_UPDATE_FINAL_STATUS
+EOF
+
+  case "$APT_UPDATE_RECOVERY_ACTION" in
+    chrome-key-refreshed)
+      cat <<'EOF'
+  - recovery action: refreshed Google Chrome apt key during this run
+EOF
+      ;;
+    chrome-repo-disabled)
+      cat <<'EOF'
+  - recovery action: disabled Google Chrome apt repo to allow bootstrap to continue
+EOF
+      ;;
+    *)
+      cat <<'EOF'
+  - recovery action: none needed
+EOF
+      ;;
+  esac
+
+  if [[ -f "$chrome_repo_file" ]]; then
+    cat <<'EOF'
+  - chrome repo file: enabled
+EOF
+  elif [[ -f "$chrome_repo_disabled_file" ]]; then
+    cat <<'EOF'
+  - chrome repo file: disabled (google-chrome.list.disabled present)
+EOF
+  else
+    cat <<'EOF'
+  - chrome repo file: not configured
+EOF
+  fi
+
+  if [[ -f "$chrome_key_file" ]]; then
+    cat <<'EOF'
+  - chrome apt keyring: present
+EOF
+  else
+    cat <<'EOF'
+  - chrome apt keyring: missing
+EOF
+  fi
 }
 
 print_banner() {
@@ -161,7 +289,7 @@ require_root() {
 
 run_apt_update() {
   log "Refreshing apt metadata"
-  apt-get update
+  apt_update_with_repo_recovery
 
   if [[ "$ENABLE_FULL_UPGRADE" == "yes" ]]; then
     log "Applying in-release package upgrades (apt-get upgrade only; no Ubuntu release upgrade)"
@@ -193,8 +321,7 @@ install_google_chrome() {
   install -m 0755 -d /etc/apt/keyrings
 
   if [[ ! -f /etc/apt/keyrings/google-chrome.gpg ]]; then
-    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg
-    chmod a+r /etc/apt/keyrings/google-chrome.gpg
+    repair_google_chrome_repo_key
   fi
 
   cat >/etc/apt/sources.list.d/google-chrome.list <<'EOF'
@@ -315,9 +442,11 @@ configure_xfce_wallpaper() {
   local xfce_wallpaper_xml="$xfce_dir/xfce4-desktop.xml"
   local xfce_displays_xml="$xfce_dir/displays.xml"
   local autostart_dir="$user_home/.config/autostart"
+  local xfce_autostart_dir="$user_home/.config/xfce4/autostart"
   local local_bin_dir="$user_home/.local/bin"
   local wallpaper_setter_script="$local_bin_dir/bloomingedge-set-wallpaper.sh"
   local wallpaper_autostart_desktop="$autostart_dir/bloomingedge-set-wallpaper.desktop"
+  local xfce_wallpaper_autostart_desktop="$xfce_autostart_dir/bloomingedge-set-wallpaper.desktop"
   local display_popup_override_desktop="$autostart_dir/xfce4-display-settings.desktop"
   local xubuntu_display_settings_override_desktop="$autostart_dir/xfce4-settings-helper-autostart.desktop"
 
@@ -355,12 +484,17 @@ EOF
 </channel>
 EOF
 
-  install -d -m 0755 "$autostart_dir" "$local_bin_dir"
+  install -d -m 0755 "$autostart_dir" "$xfce_autostart_dir" "$local_bin_dir"
 
   cat > "$wallpaper_setter_script" <<EOF
 #!/usr/bin/env bash
 
 set -euo pipefail
+
+if [[ "${1:-}" != "--worker" ]]; then
+  nohup "$0" --worker >/dev/null 2>&1 &
+  exit 0
+fi
 
 wallpaper_path="$WALLPAPER_TARGET_PATH"
 
@@ -433,8 +567,10 @@ Exec=$wallpaper_setter_script
 X-GNOME-Autostart-Delay=3
 OnlyShowIn=XFCE;
 X-GNOME-Autostart-enabled=true
-NoDisplay=true
+NoDisplay=false
 EOF
+
+  cp "$wallpaper_autostart_desktop" "$xfce_wallpaper_autostart_desktop"
 
   cat > "$display_popup_override_desktop" <<'EOF'
 [Desktop Entry]
@@ -455,9 +591,9 @@ NoDisplay=true
 EOF
 
   chmod 0755 "$wallpaper_setter_script"
-  chmod 0644 "$wallpaper_autostart_desktop" "$display_popup_override_desktop" "$xubuntu_display_settings_override_desktop"
+  chmod 0644 "$wallpaper_autostart_desktop" "$xfce_wallpaper_autostart_desktop" "$display_popup_override_desktop" "$xubuntu_display_settings_override_desktop"
 
-  chown -R "$user_name":"$user_name" "$user_home/.config/xfce4" "$autostart_dir" "$local_bin_dir"
+  chown -R "$user_name":"$user_name" "$user_home/.config/xfce4" "$autostart_dir" "$xfce_autostart_dir" "$local_bin_dir"
   log "Configured XFCE wallpaper for $user_name"
 }
 
@@ -706,8 +842,14 @@ export DESKTOP_SESSION=xfce
 export XDG_CURRENT_DESKTOP=XFCE
 
 # Clear stale values so XRDP can create a fresh desktop session.
+unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
 unset XDG_RUNTIME_DIR
+
+# Stale XFCE session state can cause immediate XRDP logout on reconnects/reboots.
+if [ -d "$HOME/.cache/sessions" ]; then
+  rm -f "$HOME/.cache/sessions"/*
+fi
 
 if command -v dbus-launch >/dev/null 2>&1; then
   exec dbus-launch --exit-with-session startxfce4
@@ -833,6 +975,8 @@ enroll the node as a NetBird peer automatically.
 
 If $ADMIN_USER was added to the docker group, log out and back in before using Docker without sudo.
 EOF
+
+  print_repo_health_summary
 }
 
 main() {
