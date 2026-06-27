@@ -511,9 +511,10 @@ sudo chmod 0644 "$WALLPAPER_TARGET"
 # Wait for XFCE to be ready
 sleep 3
 
-# Set it using xfconf-query - discover ALL monitors dynamically
+# Set it using xfconf-query - explicitly handle all known and discovered monitors
 if command -v xfconf-query >/dev/null 2>&1; then
-  # Get ALL last-image properties from all monitors
+  # First, set wallpaper for all DISCOVERED monitors dynamically
+  # This catches any monitors that exist when the script runs
   xfconf-query -c xfce4-desktop -l 2>/dev/null | grep 'last-image' | while read -r prop; do
     xfconf-query -c xfce4-desktop -p "$prop" -s "$WALLPAPER_TARGET" -t string 2>/dev/null || true
     
@@ -522,7 +523,19 @@ if command -v xfconf-query >/dev/null 2>&1; then
     xfconf-query -c xfce4-desktop -p "$style_prop" -s 5 -t int 2>/dev/null || true
   done
   
-  # Reload desktop
+  # Second, EXPLICITLY create settings for known RDP and virtual monitor names
+  # This ensures they have wallpaper even if they don't exist yet (they will be created by RDP/XVFB later)
+  for monitor in "monitor0" "monitorrdp0" "monitorDP-3" "monitorVirtual1"; do
+    for workspace in 0 1 2 3; do
+      prop="/backdrop/screen0/$monitor/workspace$workspace/last-image"
+      style_prop="/backdrop/screen0/$monitor/workspace$workspace/image-style"
+      # Set wallpaper using proper quoting to avoid issues with special characters
+      xfconf-query -c xfce4-desktop -p "$prop" -s "$WALLPAPER_TARGET" -t string 2>/dev/null || true
+      xfconf-query -c xfce4-desktop -p "$style_prop" -s 5 -t int 2>/dev/null || true
+    done
+  done
+  
+  # Reload desktop to apply changes
   xfdesktop --reload >/dev/null 2>&1 || true
 fi
 EOF
